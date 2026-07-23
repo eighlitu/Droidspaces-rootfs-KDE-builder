@@ -1,9 +1,5 @@
 ARG TARGETPLATFORM
-<<<<<<< HEAD
 FROM kalilinux/kali-rolling AS customizer
-=======
-FROM debian:trixie AS customizer
->>>>>>> 913b65dc5bcaeb527f41ac329a00b66448a5147c
 
 #######################################################
 ARG BUILD_KDE
@@ -34,11 +30,7 @@ RUN printf '%s\n' \
     > /etc/apt/apt.conf.d/99parallel-downloads
 
 # 更新基础系统并启用 non-free（非自由）和 contrib 软件源
-<<<<<<< HEAD
 RUN (sed -i 's/main/main contrib non-free/g' /etc/apt/sources.list 2>/dev/null || sed -i 's/Components: main/Components: main contrib non-free/g' /etc/apt/sources.list.d/kali.sources) && \
-=======
-RUN (sed -i 's/main/main contrib non-free/g' /etc/apt/sources.list 2>/dev/null || sed -i 's/Components: main/Components: main contrib non-free/g' /etc/apt/sources.list.d/debian.sources) && \
->>>>>>> 913b65dc5bcaeb527f41ac329a00b66448a5147c
     apt-get update && \
     apt-get upgrade -y
 
@@ -174,11 +166,7 @@ RUN sed -i '/en_US.UTF-8/s/^# //' /etc/locale.gen && \
     sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin no/' /etc/ssh/sshd_config && \
     sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config && \
     # 如果容器内存在默认的 debian 用户，则将其连同家目录一起删除
-<<<<<<< HEAD
     deluser --remove-home kali || true && \
-=======
-    deluser --remove-home debian || true && \
->>>>>>> 913b65dc5bcaeb527f41ac329a00b66448a5147c
     useradd -m -s /bin/bash ${USERNAME} && echo "${USERNAME}:1234" | chpasswd 
 
 # 为所有 Debian RootFS 安装 Droidspaces USB Manager
