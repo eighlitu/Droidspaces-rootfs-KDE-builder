@@ -46,7 +46,7 @@ COPY scripts/install-usb-manager.sh /usr/local/sbin/install-droidspaces-usb-mana
 COPY anland-build/Debian13/*.deb /tmp/anland-build/Debian13/
 
 # 赋予相关脚本可执行权限
-RUN chmod +x /usr/local/bin/download-firmware /etc/profile.d/ds-aliases.sh
+RUN chmod +x /usr/local/bin/download-firmware /etc/profile.d/ds-aliases.sh /usr/local/sbin/install-droidspaces-usb-manager
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
@@ -166,11 +166,12 @@ RUN sed -i '/en_US.UTF-8/s/^# //' /etc/locale.gen && \
     sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin no/' /etc/ssh/sshd_config && \
     sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config && \
     # 如果容器内存在默认的 kali 用户，将其删除并重新建指定 username
-    deluser --remove-home kali || true && \
+    deluser --remove-home kali 2>/dev/null || true && \
     useradd -m -s /bin/bash ${USERNAME} && echo "${USERNAME}:1234" | chpasswd 
 
 # 安装 Droidspaces USB Manager
-RUN /usr/local/sbin/install-droidspaces-usb-manager --user "${USERNAME}"
+RUN chmod +x /usr/local/sbin/install-droidspaces-usb-manager && \
+    /usr/local/sbin/install-droidspaces-usb-manager --user "${USERNAME}"
 
 # 添加环境变量
 RUN cat <<'EOF' > /etc/environment
