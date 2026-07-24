@@ -277,7 +277,9 @@ RUN if [ "$ENABLE_mesa_ARG" = "true" ]; then \
         wget -q --tries=5 --waitretry=3 -O /tmp/mesa.tar.gz "$URL" && \
         tar -zxf /tmp/mesa.tar.gz -C / && \
         rm /tmp/mesa.tar.gz && \
-        ldconfig; \
+        ldconfig && \
+        # Mesa-for-android-container 预编译包链接了 LLVM 19.1，Kali 不会自动安装
+        apt-get install -y --no-install-recommends libllvm19; \
     else \
         echo "--> [跳过] 未开启 Mesa 驱动安装"; \
     fi
