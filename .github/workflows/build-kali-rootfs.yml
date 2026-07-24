@@ -226,8 +226,8 @@ jobs:
                 git -C /tmp/anland checkout --detach FETCH_HEAD
               fi
 
-              # Kali 使用 Debian 13 (Trixie) 的构建脚本，因为 Kali 基于 Debian Testing
-              BUILD_SCRIPT="producers/kde/Debian13_v5/build.sh"
+              # Kali 使用专门的 Kali_v5 构建脚本（API 已适配 Kali 新版 KWin）
+              BUILD_SCRIPT="producers/kde/Kali_v5/build.sh"
               test -f "/tmp/anland/$BUILD_SCRIPT"
               chmod +x "/tmp/anland/$BUILD_SCRIPT"
 
