@@ -12,6 +12,7 @@ on:
         options:
           - 'ubuntu2604'
           - 'Debian13'
+          - 'KaliRolling'
           - 'Fedora43'
           - 'Fedora44'
           - 'all'
@@ -57,9 +58,9 @@ jobs:
 
           case "${{ github.event.inputs.build_target }}" in
             all)
-              targets='["ubuntu2604","Debian13","Fedora43","Fedora44"]'
+              targets='["ubuntu2604","Debian13","KaliRolling","Fedora43","Fedora44"]'
               ;;
-            ubuntu2604|Debian13|Fedora43|Fedora44)
+            ubuntu2604|Debian13|KaliRolling|Fedora43|Fedora44)
               targets='["${{ github.event.inputs.build_target }}"]'
               ;;
             *)
@@ -109,6 +110,12 @@ jobs:
               echo "dest=anland-build/Debian13" >> "$GITHUB_OUTPUT"
               echo "pkg_pattern=*.deb" >> "$GITHUB_OUTPUT"
               ;;
+            KaliRolling)
+              echo "image=kalilinux/kali-rolling" >> "$GITHUB_OUTPUT"
+              echo "script=producers/kde/KaliRolling_v5/build.sh" >> "$GITHUB_OUTPUT"
+              echo "dest=anland-build/KaliRolling" >> "$GITHUB_OUTPUT"
+              echo "pkg_pattern=*.deb" >> "$GITHUB_OUTPUT"
+              ;;
             Fedora43)
               echo "image=fedora:43" >> "$GITHUB_OUTPUT"
               echo "script=producers/kde/Fedora43_v5/build.sh" >> "$GITHUB_OUTPUT"
@@ -152,7 +159,7 @@ jobs:
 
               # 按发行版安装基础工具
               case "$BUILD_TARGET" in
-                Debian13|ubuntu2604)
+                Debian13|ubuntu2604|KaliRolling)
                   apt-get update
                   apt-get install -y --no-install-recommends \
                     git ca-certificates sudo \
@@ -196,13 +203,8 @@ jobs:
         run: |
           set -euo pipefail
 
-          mkdir -p "$DEST_DIR"
-
-          # 包名包含版本号；清理扁平目录中的旧包，避免新旧版本共存。
-          # 同时删除旧版目录布局，兼容目录扁平化前留下的产物。
-          find "$DEST_DIR" -maxdepth 1 -type f \
-            \( -name '*.deb' -o -name '*.rpm' -o -name '*.pkg.tar.zst' \) -delete
           rm -rf "$DEST_DIR/kwin" "$DEST_DIR/xwayland"
+          mkdir -p "$DEST_DIR"
 
           # 按包格式收集产物
           test -d "$OUTPUT_DIR/kwin" && find "$OUTPUT_DIR/kwin" -maxdepth 1 -type f -name "$PKG_PATTERN" ! -name '*debug*' ! -name '*dbgsym*' ! -name '*.src.*' ! -name 'kwin-dev_*' ! -name 'kwin-devel-*' ! -name 'kwin-doc-*' -exec cp -v {} "$DEST_DIR/" \;
@@ -262,7 +264,7 @@ jobs:
           for artifact_dir in "${artifact_dirs[@]}"; do
             target="${artifact_dir##*/anland-pkgs-}"
             case "$target" in
-              ubuntu2604|Debian13|Fedora43|Fedora44)
+              ubuntu2604|Debian13|KaliRolling|Fedora43|Fedora44)
                 ;;
               *)
                 echo "不支持的构建产物目标: $target" >&2
@@ -271,11 +273,8 @@ jobs:
             esac
 
             dest_dir="anland-build/$target"
-            mkdir -p "$dest_dir"
-            # 构建产物文件名带版本号，复制前必须移除目标目录中的旧包。
-            find "$dest_dir" -maxdepth 1 -type f \
-              \( -name '*.deb' -o -name '*.rpm' -o -name '*.pkg.tar.zst' \) -delete
             rm -rf "$dest_dir/kwin" "$dest_dir/xwayland"
+            mkdir -p "$dest_dir"
             cp -a "$artifact_dir/." "$dest_dir/"
 
             pkg_count="$(find "$dest_dir" -type f \( -name '*.deb' -o -name '*.rpm' -o -name '*.pkg.tar.zst' \) | wc -l)"
