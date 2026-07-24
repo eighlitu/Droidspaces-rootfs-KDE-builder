@@ -12,9 +12,9 @@ on:
         options:
           - 'ubuntu2604'
           - 'Debian13'
-          - 'KaliRolling'
           - 'Fedora43'
           - 'Fedora44'
+          - 'Kali'
           - 'all'
       anland_ref:
         description: 'anland 仓库分支、标签或 commit'
@@ -25,7 +25,7 @@ on:
         description: 'anland 仓库地址（默认上游，可填你的 fork）'
         required: false
         type: string
-        default: 'https://github.com/eighlitu/anland.git'
+        default: 'https://github.com/superturtlee/anland.git'
       commit_changes:
         description: '构建成功后提交更新到本仓库'
         required: true
@@ -58,9 +58,9 @@ jobs:
 
           case "${{ github.event.inputs.build_target }}" in
             all)
-              targets='["ubuntu2604","Debian13","KaliRolling","Fedora43","Fedora44"]'
+              targets='["ubuntu2604","Debian13","Fedora43","Fedora44","Kali"]'
               ;;
-            ubuntu2604|Debian13|KaliRolling|Fedora43|Fedora44)
+            ubuntu2604|Debian13|Fedora43|Fedora44|Kali)
               targets='["${{ github.event.inputs.build_target }}"]'
               ;;
             *)
@@ -110,12 +110,6 @@ jobs:
               echo "dest=anland-build/Debian13" >> "$GITHUB_OUTPUT"
               echo "pkg_pattern=*.deb" >> "$GITHUB_OUTPUT"
               ;;
-            KaliRolling)
-              echo "image=kalilinux/kali-rolling" >> "$GITHUB_OUTPUT"
-              echo "script=producers/kde/KaliRolling_v5/build.sh" >> "$GITHUB_OUTPUT"
-              echo "dest=anland-build/KaliRolling" >> "$GITHUB_OUTPUT"
-              echo "pkg_pattern=*.deb" >> "$GITHUB_OUTPUT"
-              ;;
             Fedora43)
               echo "image=fedora:43" >> "$GITHUB_OUTPUT"
               echo "script=producers/kde/Fedora43_v5/build.sh" >> "$GITHUB_OUTPUT"
@@ -127,6 +121,12 @@ jobs:
               echo "script=producers/kde/Fedora43_v5/build.sh" >> "$GITHUB_OUTPUT"
               echo "dest=anland-build/Fedora44" >> "$GITHUB_OUTPUT"
               echo "pkg_pattern=*.rpm" >> "$GITHUB_OUTPUT"
+              ;;
+            Kali)
+              echo "image=kalilinux/kali-rolling" >> "$GITHUB_OUTPUT"
+              echo "script=producers/kde/Kali_v5/build.sh" >> "$GITHUB_OUTPUT"
+              echo "dest=anland-build/Kali" >> "$GITHUB_OUTPUT"
+              echo "pkg_pattern=*.deb" >> "$GITHUB_OUTPUT"
               ;;
             *)
               echo "不支持的构建目标: $BUILD_TARGET" >&2
@@ -159,7 +159,7 @@ jobs:
 
               # 按发行版安装基础工具
               case "$BUILD_TARGET" in
-                Debian13|ubuntu2604|KaliRolling)
+                Debian13|ubuntu2604|Kali)
                   apt-get update
                   apt-get install -y --no-install-recommends \
                     git ca-certificates sudo \
@@ -183,6 +183,14 @@ jobs:
               if [ "$BUILD_TARGET" = "Debian13" ]; then
                 if [ -f /etc/apt/sources.list.d/debian.sources ]; then
                   sed -i "s/^Types: deb\$/Types: deb deb-src/" /etc/apt/sources.list.d/debian.sources
+                fi
+                apt-get update
+              fi
+
+              # Kali 也使用 DEB822 格式的 .sources 文件（kali.sources）
+              if [ "$BUILD_TARGET" = "Kali" ]; then
+                if [ -f /etc/apt/sources.list.d/kali.sources ]; then
+                  sed -i "s/^Types: deb\$/Types: deb deb-src/" /etc/apt/sources.list.d/kali.sources
                 fi
                 apt-get update
               fi
@@ -264,7 +272,7 @@ jobs:
           for artifact_dir in "${artifact_dirs[@]}"; do
             target="${artifact_dir##*/anland-pkgs-}"
             case "$target" in
-              ubuntu2604|Debian13|KaliRolling|Fedora43|Fedora44)
+              ubuntu2604|Debian13|Fedora43|Fedora44|Kali)
                 ;;
               *)
                 echo "不支持的构建产物目标: $target" >&2

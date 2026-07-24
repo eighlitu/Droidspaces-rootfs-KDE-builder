@@ -1,0 +1,445 @@
+name: 编译并发布 Kali Linux KDE RootFS
+
+on:
+  workflow_dispatch:
+    inputs:
+      custom_username:
+        description: '自定义用户名（默认 Gold）'
+        required: false
+        type: string
+        default: 'Gold'
+      build_KDE:
+        description: 'KDE桌面选择(conc-精简 min-最小构造 mobile-移动版 none-不用KDE)'
+        required: true
+        type: choice
+        default: 'min'
+        options:
+          - 'conc'
+          - 'min'
+          - 'mobile'
+          - 'none'
+      build_KDE_plus:
+        description: 'KDE 桌面开机自启动 (需要 KDE 桌面选择为 conc、min 或 mobile)'
+        required: true
+        type: boolean
+        default: true
+      enable_anland_kde:
+        description: 'Wayland 支持（选择 mobile 强制启用 wayland）'
+        required: true
+        type: boolean
+        default: false
+      PulseAudio:
+        description: 'PulseAudio 音频转发（Wayland 模式下会被强制设为 none）'
+        required: true
+        type: choice
+        default: 'socket'
+        options:
+          - 'socket'
+          - 'tcp'
+          - 'none'
+      enable_zh_tz:
+        description: '使用中文语言，并更改时区为上海'
+        required: true
+        type: boolean
+        default: true
+      enable_mesa:
+        description: '开启高通骁龙GPU支持'
+        required: true
+        type: boolean
+        default: true
+      enable_8gen2_wayland:
+        description: '修复 8Gen2 Wayland 花屏'
+        required: true
+        type: boolean
+        default: false
+      enable_tmoe:
+        description: '集成 TMOE'
+        required: true
+        type: boolean
+        default: true
+      enable_srf:
+        description: '开启输入法 fcitx5 支持'
+        required: true
+        type: boolean
+        default: false
+      enable_binfmt:
+        description: '开启跨架构支持'
+        required: true
+        type: boolean
+        default: false
+      enable_yj:
+        description: '开启 Nat和硬件识别支持'
+        required: true
+        type: boolean
+        default: true
+      enable_kfgj:
+        description: '开发工具集成'
+        required: true
+        type: boolean
+        default: false
+      enable_zip:
+        description: '压缩工具集成'
+        required: true
+        type: boolean
+        default: true
+      enable_docker:
+        description: 'Docker 集成'
+        required: true
+        type: boolean
+        default: false
+      build_wayland_packages:
+        description: '触发 KDE Wayland 预编译包构建流程（从 anland 源码构建 patched KWin/Xwayland）'
+        required: true
+        type: boolean
+        default: false
+      anland_ref:
+        description: 'anland 仓库分支/标签/commit（构建 Wayland 包时使用）'
+        required: false
+        type: string
+        default: 'main'
+      anland_repo:
+        description: 'anland 仓库地址（默认上游，可填你的 fork）'
+        required: false
+        type: string
+        default: 'https://github.com/superturtlee/anland.git'
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: build-kali-rootfs-${{ github.ref }}-${{ github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  # --------------------------------------------------------
+  # 阶段 1: setup (环境准备与变量生成)
+  # --------------------------------------------------------
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      wayland_enabled: ${{ steps.resolve.outputs.wayland_enabled }}
+      pulseaudio_effective: ${{ steps.resolve.outputs.pulseaudio_effective }}
+      build_id: ${{ steps.prep.outputs.build_id }}
+      build_date: ${{ steps.prep.outputs.build_date }}
+    steps:
+      - name: 检出代码库
+        uses: actions/checkout@v5
+
+      - name: 解析用户的构建选择
+        id: resolve
+        run: |
+          BUILD_KDE="${{ github.event.inputs.build_KDE }}"
+          ENABLE_ANLAND_KDE="${{ github.event.inputs.enable_anland_kde }}"
+          PULSE_AUDIO="${{ github.event.inputs.PulseAudio }}"
+
+          # 验证选项
+          if [ "$ENABLE_ANLAND_KDE" = "true" ] && [ "$BUILD_KDE" = "none" ]; then
+            echo "错误: 启用 Wayland 支持时，KDE 桌面选择不能为 'none'" >&2
+            exit 1
+          fi
+
+          # mobile 模式强制启用 Wayland
+          if [ "$BUILD_KDE" = "mobile" ]; then
+            echo "提示: 选择了移动版 KDE，Wayland 支持已强制启用"
+            ENABLE_ANLAND_KDE="true"
+          fi
+
+          # Wayland 模式下 PulseAudio 设为 none（Anland app 自带音频）
+          if [ "$ENABLE_ANLAND_KDE" = "true" ]; then
+            echo "提示: 选择了启用 Wayland 支持，PulseAudio 将被禁用，Anland app 自带音频"
+            PULSE_AUDIO="none"
+          fi
+
+          echo "wayland_enabled=$ENABLE_ANLAND_KDE" >> "$GITHUB_OUTPUT"
+          echo "pulseaudio_effective=$PULSE_AUDIO" >> "$GITHUB_OUTPUT"
+          echo "Wayland 支持最终值: $ENABLE_ANLAND_KDE"
+          echo "PulseAudio 最终值: $PULSE_AUDIO"
+
+      - name: 准备构建元数据
+        id: prep
+        run: |
+          BUILD_DATE=$(date +'%Y-%m-%d %H:%M:%S')
+          BUILD_ID="v$(date +'%Y%m%d-%H%M%S')"
+          echo "build_date=$BUILD_DATE" >> "$GITHUB_OUTPUT"
+          echo "build_id=$BUILD_ID" >> "$GITHUB_OUTPUT"
+          echo "构建 ID: $BUILD_ID"
+
+  # --------------------------------------------------------
+  # 可选: 构建 Kali Wayland 预编译包
+  # --------------------------------------------------------
+  build-wayland-packages:
+    needs: setup
+    if: ${{ github.event.inputs.build_wayland_packages == 'true' && needs.setup.outputs.wayland_enabled == 'true' }}
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 360
+    permissions:
+      contents: write
+    env:
+      ANLAND_REPO: ${{ github.event.inputs.anland_repo }}
+      ANLAND_REF: ${{ github.event.inputs.anland_ref }}
+    steps:
+      - name: 检出本仓库
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: 在 Kali 容器中编译 patched KWin/Xwayland
+        env:
+          OUTPUT_DIR: .anland-build/Kali
+        run: |
+          set -euo pipefail
+
+          rm -rf "$OUTPUT_DIR"
+          mkdir -p "$OUTPUT_DIR"
+
+          # Kali 使用与 Debian 相同的 DEB822 格式源文件
+          # 需要启用 deb-src 才能用 apt-get source
+          docker run --rm \
+            -e ANLAND_REPO \
+            -e ANLAND_REF \
+            -v "$PWD/$OUTPUT_DIR:/root/anland-build" \
+            kalilinux/kali-rolling \
+            bash -lc '
+              set -euo pipefail
+
+              # 安装基础构建工具
+              apt-get update
+              apt-get install -y --no-install-recommends \
+                git ca-certificates sudo \
+                build-essential devscripts dpkg-dev fakeroot patch
+
+              # Kali 使用 DEB822 格式的 .sources 文件，需要手动启用 deb-src
+              if [ -f /etc/apt/sources.list.d/kali.sources ]; then
+                sed -i "s/^Types: deb\$/Types: deb deb-src/" /etc/apt/sources.list.d/kali.sources
+              fi
+              # 兼容旧格式
+              if [ -f /etc/apt/sources.list ]; then
+                sed -i "s/^deb /deb-src /" /etc/apt/sources.list
+              fi
+              apt-get update
+
+              # 克隆 anland 仓库
+              if ! git clone --depth=1 --branch "$ANLAND_REF" "$ANLAND_REPO" /tmp/anland; then
+                git clone --depth=1 "$ANLAND_REPO" /tmp/anland
+                git -C /tmp/anland fetch --depth=1 origin "$ANLAND_REF"
+                git -C /tmp/anland checkout --detach FETCH_HEAD
+              fi
+
+              # Kali 使用 Debian 13 (Trixie) 的构建脚本，因为 Kali 基于 Debian Testing
+              BUILD_SCRIPT="producers/kde/Debian13_v5/build.sh"
+              test -f "/tmp/anland/$BUILD_SCRIPT"
+              chmod +x "/tmp/anland/$BUILD_SCRIPT"
+
+              cd "/tmp/anland/$(dirname "$BUILD_SCRIPT")"
+              WORKDIR=/root/anland-build sudo -E "./$(basename "$BUILD_SCRIPT")"
+            '
+
+      - name: 收集构建产物到仓库目录
+        env:
+          DEST_DIR: anland-build/Kali
+          OUTPUT_DIR: .anland-build/Kali
+        run: |
+          set -euo pipefail
+
+          rm -rf "$DEST_DIR/kwin" "$DEST_DIR/xwayland"
+          mkdir -p "$DEST_DIR"
+
+          # 收集 kwin 相关 deb 包（排除 debug/dbgsym/src/dev/doc）
+          test -d "$OUTPUT_DIR/kwin" && find "$OUTPUT_DIR/kwin" -maxdepth 1 -type f -name '*.deb' \
+            ! -name '*debug*' ! -name '*dbgsym*' ! -name '*.src.*' \
+            ! -name 'kwin-dev_*' ! -name 'kwin-doc-*' \
+            -exec cp -v {} "$DEST_DIR/" \;
+
+          # 收集 xwayland 相关 deb 包
+          test -d "$OUTPUT_DIR/xwayland" && find "$OUTPUT_DIR/xwayland" -maxdepth 1 -type f -name '*.deb' \
+            ! -name '*debug*' ! -name '*dbgsym*' ! -name '*.src.*' \
+            -exec cp -v {} "$DEST_DIR/" \;
+
+          pkg_count="$(find "$DEST_DIR" -type f -name '*.deb' | wc -l)"
+          if [ "$pkg_count" -eq 0 ]; then
+            echo "错误: 没有找到生成的 deb 包" >&2
+            exit 1
+          fi
+
+          echo "共收集到 $pkg_count 个预编译包:"
+          find "$DEST_DIR" -type f -name '*.deb' -print | sort
+
+      - name: 提交预编译包更新
+        run: |
+          set -euo pipefail
+
+          DEST_DIR="anland-build/Kali"
+
+          if [ -z "$(git status --porcelain -- "$DEST_DIR")" ]; then
+            echo "预编译包没有变化，无需提交"
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A "$DEST_DIR"
+          git commit -m "Update Kali anland KDE Wayland packages"
+          git pull --rebase --autostash origin "${{ github.ref_name }}" || true
+          git push
+
+  # --------------------------------------------------------
+  # 阶段 2: build (Kali RootFS 构建)
+  # --------------------------------------------------------
+  build:
+    needs: [setup, build-wayland-packages]
+    if: |
+      !cancelled() &&
+      (needs.build-wayland-packages.result == 'success' || needs.build-wayland-packages.result == 'skipped')
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - name: 检出代码库
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.ref_name }}
+
+      - name: 验证构建选项
+        run: |
+          if [ "${{ github.event.inputs.build_KDE }}" = "none" ] && [ "${{ github.event.inputs.build_KDE_plus }}" = "true" ]; then
+            echo "❌ 错误: 当 KDE 桌面选择为 'none' 时，无法启用 KDE 开机自启动"
+            echo "请重新运行工作流，取消勾选 'KDE 桌面开机自启动' 或选择 KDE 桌面"
+            exit 1
+          fi
+
+      - name: 准备 anland-build/Kali 目录
+        run: |
+          # 确保 anland-build/Kali 目录存在（即使是空的，Docker COPY 也需要）
+          mkdir -p anland-build/Kali
+          # 如果没有预编译包，创建一个占位文件以避免 COPY 失败
+          if [ -z "$(ls -A anland-build/Kali/ 2>/dev/null)" ]; then
+            echo "提示: anland-build/Kali 目录为空。"
+            echo "如果启用了 Wayland 支持但目录为空，构建将失败。"
+            echo "请先运行 build_wayland_packages=true，或确保目录中有预编译包。"
+          fi
+
+      - name: 编译 Kali RootFS
+        run: |
+          chmod +x build_rootfs-native.sh
+          ./build_rootfs-native.sh \
+            -i "Kali-KDE.Dockerfile" \
+            -v "${{ needs.setup.outputs.build_id }}" \
+            -K "${{ github.event.inputs.build_KDE }}" \
+            -L "${{ github.event.inputs.build_KDE_plus }}" \
+            -P "${{ needs.setup.outputs.pulseaudio_effective }}" \
+            -g "${{ github.event.inputs.enable_zh_tz }}" \
+            -a "${{ github.event.inputs.enable_binfmt }}" \
+            -b "${{ github.event.inputs.enable_yj }}" \
+            -c "${{ github.event.inputs.enable_mesa }}" \
+            -d "${{ github.event.inputs.enable_kfgj }}" \
+            -e "${{ github.event.inputs.enable_zip }}" \
+            -f "${{ github.event.inputs.enable_docker }}" \
+            -h "${{ github.event.inputs.enable_srf }}" \
+            -j "${{ github.event.inputs.enable_tmoe }}" \
+            -n "false" \
+            -t "${{ github.event.inputs.enable_8gen2_wayland }}" \
+            -A "${{ needs.setup.outputs.wayland_enabled }}" \
+            -u "${{ github.event.inputs.custom_username }}"
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v6
+        with:
+          name: Kali-KDE-rootfs
+          path: "*.tar.xz"
+          retention-days: 1
+
+  # --------------------------------------------------------
+  # 阶段 3: release (汇总发布)
+  # --------------------------------------------------------
+  release:
+    needs: [setup, build]
+    if: ${{ !cancelled() && needs.setup.result == 'success' && needs.build.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: 检出代码库
+        uses: actions/checkout@v5
+
+      - name: 下载所有产物
+        uses: actions/download-artifact@v7
+        with:
+          pattern: "*-rootfs"
+          merge-multiple: true
+
+      - name: 整理资源
+        run: |
+          mkdir -p release_assets
+          mv *.tar.xz release_assets/
+          PA_CHOICE="${{ needs.setup.outputs.pulseaudio_effective }}"
+          CUSTOM_USERNAME="${{ github.event.inputs.custom_username }}"
+          build_KDE_plus="${{ github.event.inputs.build_KDE_plus }}"
+          if [ "$PA_CHOICE" != "none" ] && [ "$build_KDE_plus" = "false" ]; then
+            cp "scripts/on_aaudio_${PA_CHOICE}.sh" "release_assets/on_aaudio_${PA_CHOICE}.sh"
+            sed -i "s/USERNAME=\"Gold\"/USERNAME=\"${CUSTOM_USERNAME}\"/g" "release_assets/on_aaudio_${PA_CHOICE}.sh"
+          fi
+
+      - name: 创建统一 Release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: kali-${{ needs.setup.outputs.build_id }}
+          name: "Kali Linux KDE RootFS ${{ needs.setup.outputs.build_id }}"
+          files: "release_assets/*"
+          body: |
+            # Kali Linux KDE RootFS 自动构建
+
+            基于 [Droidspaces-rootfs-KDE-builder](https://github.com/Goldzxcbug/Droidspaces-rootfs-KDE-builder) 项目，
+            使用 Kali Linux (kali-rolling) 构建的 KDE Plasma 桌面 RootFS。
+
+            ## 构建信息
+            - **构建时间**: ${{ needs.setup.outputs.build_date }}
+            - **构建 ID**: ${{ needs.setup.outputs.build_id }}
+            - **基础系统**: Kali Linux Rolling
+            - **架构**: ARM64 (aarch64)
+
+            ## 构建选项
+            - **自定义用户名**: ${{ github.event.inputs.custom_username }}
+            - **KDE 桌面**: ${{ github.event.inputs.build_KDE }}
+            - **KDE 开机自启动**: ${{ github.event.inputs.build_KDE_plus }}
+            - **Wayland 支持**: ${{ needs.setup.outputs.wayland_enabled }}
+            - **PulseAudio 音频转发**: ${{ needs.setup.outputs.pulseaudio_effective }}
+            - **使用中文作为主语言**: ${{ github.event.inputs.enable_zh_tz }}
+            - **高通骁龙 GPU 支持**: ${{ github.event.inputs.enable_mesa }}
+            - **修复 8Gen2 Wayland 花屏**: ${{ github.event.inputs.enable_8gen2_wayland }}
+            - **集成 TMOE**: ${{ github.event.inputs.enable_tmoe }}
+            - **输入法 fcitx5 支持**: ${{ github.event.inputs.enable_srf }}
+            - **跨架构支持**: ${{ github.event.inputs.enable_binfmt }}
+            - **容器硬件与网络识别支持**: ${{ github.event.inputs.enable_yj }}
+            - **开发工具集成**: ${{ github.event.inputs.enable_kfgj }}
+            - **压缩工具集成**: ${{ github.event.inputs.enable_zip }}
+            - **Docker 集成**: ${{ github.event.inputs.enable_docker }}
+
+            ## 导入 Droidspaces
+            1. 在 Droidspaces 中创建或导入容器
+            2. RootFS 文件选择 Release 下载的 `.tar.xz`
+            3. **必须开启 GPU 访问**
+            4. 建议在特权模式中开启 `noseccomp` 和 `nocaps`
+            5. 如果使用 Wayland/Anland 模式，参见下方配置
+
+            ### Wayland/Anland 配置
+            如果启用了 Wayland 支持:
+            1. 从 [anland Releases](https://github.com/superturtlee/anland/releases) 下载 `virtual-drm-daemon.zip`，刷入后重启设备
+            2. 安装 `app-debug.apk`
+            3. 在高级选项中添加绑定挂载:
+               ```
+               /data/local/tmp/display_daemon.sock -> /run/display.sock
+               ```
+            4. 容器内执行 `startplasma-wayland` 启动 KDE Wayland 会话
+
+            ### 默认账户
+            - **用户名**: ${{ github.event.inputs.custom_username }}
+            - **密码**: 1234（导入后请立即修改）
+
+            ## 致谢
+            - [Droidspaces-OSS](https://github.com/ravindu644/Droidspaces-OSS/)
+            - [anland](https://github.com/superturtlee/anland)
+            - [mesa-for-android-container](https://github.com/lfdevs/mesa-for-android-container)
+            - [TMOE](https://github.com/2moe/tmoe)
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
